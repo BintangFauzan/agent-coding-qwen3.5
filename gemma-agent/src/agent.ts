@@ -294,7 +294,25 @@ function parseTodo(content: string, thinking: string = ""): TodoItem[] | null {
     return items.length > 0 ? items : null;
   }
 
-  const planKeywords = ["i need to:", "plan:", "steps:", "todo:", "task:"];
+  const allLines = thinking.split("\n");
+  const numberedItems: TodoItem[] = [];
+  for (const line of allLines) {
+    const trimmed = line.trim();
+    const listMatch = trimmed.match(/^(\d+[\.\)])\s+(.+)/);
+    if (listMatch) {
+      numberedItems.push({ text: listMatch[2], done: false, active: false, indent: 0 });
+    }
+  }
+  if (numberedItems.length >= 2) {
+    return numberedItems;
+  }
+
+  const planKeywords = [
+    "i need to:", "plan:", "steps:", "todo:", "task:",
+    "i'll create", "i will create", "let me create",
+    "i need to create", "need to:", "here's what",
+    "following files", "following steps", "create the following",
+  ];
   const lowerThinking = thinking.toLowerCase();
 
   if (planKeywords.some((k) => lowerThinking.includes(k))) {
@@ -304,27 +322,14 @@ function parseTodo(content: string, thinking: string = ""): TodoItem[] | null {
 
     for (const line of lines) {
       const trimmed = line.trim();
-      if (planKeywords.some((k) => trimmed.toLowerCase().startsWith(k))) {
+      if (planKeywords.some((k) => trimmed.toLowerCase().includes(k))) {
         capturing = true;
         continue;
       }
       if (capturing) {
         const listMatch = trimmed.match(/^(\d+[\.\)]|[-*•])\s+(.+)/);
         if (listMatch) {
-          items.push({
-            text: listMatch[2],
-            done: false,
-            active: false,
-            indent: 0,
-          });
-        } else if (trimmed.length > 5 && !trimmed.includes("http")) {
-          if (items.length > 0)
-            items.push({
-              text: trimmed,
-              done: false,
-              active: false,
-              indent: 0,
-            });
+          items.push({ text: listMatch[2], done: false, active: false, indent: 0 });
         } else if (trimmed === "" && items.length > 0) {
           break;
         }
@@ -437,11 +442,13 @@ export async function reactLoop(
         process.stdout.write("\n  " + C.gray + "Thinking:" + C.reset + "\n");
       }
       console.log("  " + C.gray + C.dim + "  " + thinkingBuffer + C.reset);
-      thinkingBuffer = "";
     }
 
-    if (contentBuffer.trim().length > 0 || thinkingBuffer.trim().length > 0) {
-      const todos = parseTodo(contentBuffer, thinkingBuffer);
+    const finalThinking = thinkingBuffer;
+    thinkingBuffer = "";
+
+    if (contentBuffer.trim().length > 0 || finalThinking.trim().length > 0) {
+      const todos = parseTodo(contentBuffer, finalThinking);
       if (todos) {
         currentTodos = todos;
         displayTodos(currentTodos);

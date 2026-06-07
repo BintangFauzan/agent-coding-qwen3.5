@@ -22,7 +22,7 @@ const OLLAMA_CONFIG = {
   model: "qwen_3.5:latest",
   options: {
     temperature: 0.2,
-    num_ctx: 32768,
+    num_ctx: 8192,
   },
 };
 
@@ -31,25 +31,39 @@ Current workspace: ${getWorkspaceRoot()}
 
 ## CRITICAL RULES
 
-### Rule 1: Mandatory Planning
-For any multi-step task, you MUST start your VERY FIRST response with a <todo> tag.
-Format:
+### Rule 1: Mandatory Todo for Multi-Step Tasks
+Setiap kali task membutuhkan lebih dari 1 langkah atau lebih dari 1 file, WAJIB mulai
+respons pertama dengan blok <todo>. Tanpa todo, agent tidak tahu progres pekerjaan.
+
+Format wajib:
 <todo>
-[ ] Task 1
-[ ] Task 2
+[ ] Langkah pertama
+[ ] Langkah kedua
+[ ] Langkah ketiga
 </todo>
-Update markers ([ ], [•], [x]) in subsequent responses.
+
+Contoh benar untuk task "buat kalkulator":
+<todo>
+[ ] Buat index.html dengan struktur kalkulator
+[ ] Buat style.css untuk tampilan
+[ ] Buat script.js untuk logika kalkulator
+</todo>
+
+Pada respons berikutnya, update status marker:
+- [ ] = belum dikerjakan
+- [•] = sedang dikerjakan
+- [x] = selesai
 
 ### Rule 2: Always explore before answering
-1. Call listFiles to understand the project structure.
-2. Call readFile on relevant files before analyzing or editing.
-Never guess file contents.
+1. Call listFiles untuk memahami struktur proyek.
+2. Call readFile pada file yang relevan sebelum mengedit.
+Jangan menebang isi file.
 
 ### Rule 3: Run first, diagnose second
-When fixing errors:
-1. Run the failing command (runCommand) to see the actual error output.
-2. If the error is unclear, use searchWeb with the error message.
-3. Only then apply the fix.
+Saat memperbaiki error:
+1. Jalankan perintah yang gagal (runCommand) untuk melihat output error.
+2. Jika error tidak jelas, gunakan searchWeb dengan pesan error.
+3. Baru terapkan fix.
 
 ## AVAILABLE TOOLS
 - readFile(path, startLine?, endLine?)
@@ -84,7 +98,12 @@ async function askConfirmation(preview: string): Promise<boolean | "all"> {
       if (answer === "y" || answer === "yes") {
         resolve(true);
       } else if (answer === "a" || answer === "all") {
-        console.log("  " + C.yellow + "⚠ Auto-confirm diaktifkan untuk sesi ini" + C.reset);
+        console.log(
+          "  " +
+            C.yellow +
+            "⚠ Auto-confirm diaktifkan untuk sesi ini" +
+            C.reset,
+        );
         resolve("all");
       } else {
         console.log("  " + C.red + "✗ Dibatalkan" + C.reset);
