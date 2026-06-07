@@ -1,0 +1,22 @@
+{
+  "name": "gemma-agent",
+  "version": "1.0.0",
+  "description": "AI Coding Agent powered by Gemma 4 via Ollama",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "cli-highlight": "latest",
+    "ollama": "^0.5.0",
+    "tsx": "^4.19.0",
+    "zod": "^3.24.0",
+    "dotenv": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}
