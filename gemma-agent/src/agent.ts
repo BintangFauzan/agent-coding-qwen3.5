@@ -389,6 +389,7 @@ export async function reactLoop(
     }
 
     let thinkingBuffer = "";
+    let fullThinking = "";
     let contentBuffer = "";
     let toolCallsBuffer: any[] = [];
     let thinkingStarted = false;
@@ -405,6 +406,7 @@ export async function reactLoop(
     for await (const chunk of stream) {
       if (chunk.message.thinking) {
         thinkingBuffer += chunk.message.thinking;
+        fullThinking += chunk.message.thinking;
         const thinkingLines = thinkingBuffer.split("\n");
         for (let i = 0; i < thinkingLines.length - 1; i++) {
           if (!thinkingStarted) {
@@ -445,10 +447,9 @@ export async function reactLoop(
     }
 
     const finalThinking = thinkingBuffer;
-    thinkingBuffer = "";
 
-    if (contentBuffer.trim().length > 0 || finalThinking.trim().length > 0) {
-      const todos = parseTodo(contentBuffer, finalThinking);
+    if (contentBuffer.trim().length > 0 || fullThinking.trim().length > 0) {
+      const todos = parseTodo(contentBuffer, fullThinking);
       if (todos) {
         currentTodos = todos;
         displayTodos(currentTodos);
