@@ -477,14 +477,12 @@ export async function reactLoop(
     }
 
     if (!toolCallsBuffer || toolCallsBuffer.length === 0) {
-      if (currentTodos.length > 0) {
-        currentTodos = currentTodos.map((item) => ({
-          ...item,
-          done: true,
-          active: false,
-        }));
-        displayTodos(currentTodos);
-        currentTodos = [];
+      if (currentTodos.length > 0 && contentBuffer.trim().length > 0) {
+        const allDone = currentTodos.every((item) => item.done);
+        if (allDone) {
+          displayTodos(currentTodos);
+          currentTodos = [];
+        }
       }
       return contentBuffer.trim();
     }
@@ -687,24 +685,18 @@ export async function reactLoop(
       }
 
       if (currentTodos.length > 0) {
-        const nextItem = currentTodos.find(
-          (item) => !item.done && !item.active,
-        );
+        for (const item of currentTodos) {
+          if (item.active) {
+            item.done = true;
+            item.active = false;
+          }
+        }
+        const nextItem = currentTodos.find((item) => !item.done && !item.active);
         if (nextItem) {
           nextItem.active = true;
-          displayTodos(currentTodos);
         }
+        displayTodos(currentTodos);
       }
-    }
-
-    for (const item of currentTodos) {
-      if (item.active) {
-        item.done = true;
-        item.active = false;
-      }
-    }
-    if (currentTodos.some((item) => item.done)) {
-      displayTodos(currentTodos);
     }
   }
 
