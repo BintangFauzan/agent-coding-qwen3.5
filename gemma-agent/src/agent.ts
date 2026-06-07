@@ -11,21 +11,21 @@ const OLLAMA_CONFIG = {
   model: "qwen_3.5:latest",
   options: {
     temperature: 0.2,
-    num_ctx: 32768,
+    num_ctx: 8192,
   },
 };
 
 const C = {
-  reset:   "\x1b[0m",
-  dim:     "\x1b[2m",
-  bold:    "\x1b[1m",
-  green:   "\x1b[32m",
-  red:     "\x1b[31m",
-  yellow:  "\x1b[33m",
-  blue:    "\x1b[34m",
-  cyan:    "\x1b[36m",
+  reset: "\x1b[0m",
+  dim: "\x1b[2m",
+  bold: "\x1b[1m",
+  green: "\x1b[32m",
+  red: "\x1b[31m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  cyan: "\x1b[36m",
   magenta: "\x1b[35m",
-  gray:    "\x1b[90m",
+  gray: "\x1b[90m",
 };
 
 const TOOL_DEFINITIONS = [
@@ -72,21 +72,25 @@ const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "editFile",
-      description: "Edit bagian spesifik dari file dengan mencari string lama dan menggantinya dengan string baru. Lebih aman dari writeFile karena tidak menimpa seluruh file. WAJIB sertakan path, oldString, dan newString. SELALU gunakan readFile terlebih dahulu untuk mendapatkan string yang tepat sebelum mengedit.",
+      description:
+        "Edit bagian spesifik dari file dengan mencari string lama dan menggantinya dengan string baru. Lebih aman dari writeFile karena tidak menimpa seluruh file. WAJIB sertakan path, oldString, dan newString. SELALU gunakan readFile terlebih dahulu untuk mendapatkan string yang tepat sebelum mengedit.",
       parameters: {
         type: "object",
         properties: {
           path: {
             type: "string",
-            description: "WAJIB. Path file yang akan diedit, relatif ke workspace root. Contoh: src/server.ts",
+            description:
+              "WAJIB. Path file yang akan diedit, relatif ke workspace root. Contoh: src/server.ts",
           },
           oldString: {
             type: "string",
-            description: "String yang akan dicari dan diganti. Harus unik di dalam file — tambahkan baris konteks sekitar jika perlu. HARUS diambil dari hasil readFile, jangan mengarang.",
+            description:
+              "String yang akan dicari dan diganti. Harus unik di dalam file — tambahkan baris konteks sekitar jika perlu. HARUS diambil dari hasil readFile, jangan mengarang.",
           },
           newString: {
             type: "string",
-            description: "String pengganti. Boleh kosong string untuk menghapus oldString.",
+            description:
+              "String pengganti. Boleh kosong string untuk menghapus oldString.",
           },
         },
         required: ["path", "oldString", "newString"],
@@ -134,13 +138,15 @@ const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "searchWeb",
-      description: "Search the web for documentation, solutions, or information. Use this when you cannot solve an error from code analysis alone — search for the error message or relevant technology documentation.",
+      description:
+        "Search the web for documentation, solutions, or information. Use this when you cannot solve an error from code analysis alone — search for the error message or relevant technology documentation.",
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "Search query. Be specific — include library name, error message, and version if known. Example: 'playwright launchPersistentContext SyntaxError non-null assertion JavaScript'",
+            description:
+              "Search query. Be specific — include library name, error message, and version if known. Example: 'playwright launchPersistentContext SyntaxError non-null assertion JavaScript'",
           },
         },
         required: ["query"],
@@ -167,14 +173,7 @@ const ERROR_THRESHOLD = 3;
 
 function buildPreview(toolName: string, args: Record<string, unknown>): string {
   if (toolName === "editFile") {
-    return (
-      "  " +
-      C.magenta +
-      "✎" +
-      C.reset +
-      " editFile " +
-      (args.path ?? "")
-    );
+    return "  " + C.magenta + "✎" + C.reset + " editFile " + (args.path ?? "");
   }
   if (toolName === "writeFile") {
     const bytes = Buffer.byteLength((args.content ?? "").toString(), "utf-8");
@@ -243,26 +242,15 @@ function formatToolSuccess(result: ToolResult): string {
     );
   }
   if (result.toolName === "searchWeb") {
-    const queryMatch = result.output.match(/Search results for "(.+?)"/s)
-      || result.output.match(/No results found for: "(.+?)"/);
+    const queryMatch =
+      result.output.match(/Search results for "(.+?)"/s) ||
+      result.output.match(/No results found for: "(.+?)"/);
     const query = queryMatch ? queryMatch[1] : "unknown query";
-    const displayQuery = query.length > 50
-      ? query.slice(0, 47) + "..."
-      : query;
-    return (
-      "  " + C.green + "✓" + C.reset +
-      " searchWeb — " + displayQuery
-    );
+    const displayQuery = query.length > 50 ? query.slice(0, 47) + "..." : query;
+    return "  " + C.green + "✓" + C.reset + " searchWeb — " + displayQuery;
   }
   return (
-    "  " +
-    C.green +
-    "✓" +
-    C.reset +
-    " " +
-    result.toolName +
-    " — " +
-    firstLine
+    "  " + C.green + "✓" + C.reset + " " + result.toolName + " — " + firstLine
   );
 }
 
@@ -280,10 +268,9 @@ function formatToolError(result: ToolResult): string {
 }
 
 function parseTodo(content: string, thinking: string = ""): TodoItem[] | null {
-  // 1. Try explicit <todo> tag first (anywhere in content or thinking)
   const combined = content + "\n" + thinking;
   const match = combined.match(/<todo>([\s\S]*?)<\/todo>/i);
-  
+
   if (match) {
     const lines = match[1].split("\n");
     const items: TodoItem[] = [];
@@ -307,30 +294,39 @@ function parseTodo(content: string, thinking: string = ""): TodoItem[] | null {
     return items.length > 0 ? items : null;
   }
 
-  // 2. Fallback: Look for numerical lists or bullet points in thinking if it looks like a plan
   const planKeywords = ["i need to:", "plan:", "steps:", "todo:", "task:"];
   const lowerThinking = thinking.toLowerCase();
-  
-  if (planKeywords.some(k => lowerThinking.includes(k))) {
+
+  if (planKeywords.some((k) => lowerThinking.includes(k))) {
     const lines = thinking.split("\n");
     const items: TodoItem[] = [];
     let capturing = false;
 
     for (const line of lines) {
       const trimmed = line.trim();
-      if (planKeywords.some(k => trimmed.toLowerCase().startsWith(k))) {
+      if (planKeywords.some((k) => trimmed.toLowerCase().startsWith(k))) {
         capturing = true;
         continue;
       }
       if (capturing) {
         const listMatch = trimmed.match(/^(\d+[\.\)]|[-*•])\s+(.+)/);
         if (listMatch) {
-          items.push({ text: listMatch[2], done: false, active: false, indent: 0 });
+          items.push({
+            text: listMatch[2],
+            done: false,
+            active: false,
+            indent: 0,
+          });
         } else if (trimmed.length > 5 && !trimmed.includes("http")) {
-          // Continue capturing if it looks like a step but no bullet
-          if (items.length > 0) items.push({ text: trimmed, done: false, active: false, indent: 0 });
+          if (items.length > 0)
+            items.push({
+              text: trimmed,
+              done: false,
+              active: false,
+              indent: 0,
+            });
         } else if (trimmed === "" && items.length > 0) {
-          break; // End of list
+          break;
         }
       }
     }
@@ -350,11 +346,11 @@ function displayTodos(todos: TodoItem[]): void {
 
     if (item.done) {
       console.log(
-        pad + C.green + "[✓]" + C.reset + " " + C.dim + item.text + C.reset
+        pad + C.green + "[✓]" + C.reset + " " + C.dim + item.text + C.reset,
       );
     } else if (item.active) {
       console.log(
-        pad + C.yellow + "[•]" + C.reset + " " + C.bold + item.text + C.reset
+        pad + C.yellow + "[•]" + C.reset + " " + C.bold + item.text + C.reset,
       );
     } else {
       console.log(pad + C.gray + "[ ]" + C.reset + " " + item.text);
@@ -372,19 +368,18 @@ export async function reactLoop(
 ): Promise<string> {
   const ollama = new Ollama();
   searchWebCallCount = 0;
+  lastErrorMessage = "";
+  consecutiveErrorCount = 0;
 
   for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
-    lastErrorMessage = "";
-    consecutiveErrorCount = 0;
-
     if (iteration > 1 && currentTodos.length > 0) {
-      const todoStatus = currentTodos.map(t => 
-        `${t.done ? '[x]' : (t.active ? '[•]' : '[ ]')} ${t.text}`
-      ).join('\n');
-      
+      const todoStatus = currentTodos
+        .map((t) => `${t.done ? "[x]" : t.active ? "[•]" : "[ ]"} ${t.text}`)
+        .join("\n");
+
       history.push({
-        role: "system",
-        content: `Current progress:\n<todo>\n${todoStatus}\n</todo>\nContinue with the next step according to the plan above.`
+        role: "user",
+        content: `[Progress update]\n<todo>\n${todoStatus}\n</todo>\nLanjutkan ke langkah berikutnya yang belum selesai.`,
       });
     }
 
@@ -409,11 +404,13 @@ export async function reactLoop(
         for (let i = 0; i < thinkingLines.length - 1; i++) {
           if (!thinkingStarted) {
             process.stdout.write(
-              "\n  " + C.gray + "Thinking:" + C.reset + "\n"
+              "\n  " + C.gray + "Thinking:" + C.reset + "\n",
             );
             thinkingStarted = true;
           }
-          console.log("  " + C.gray + C.dim + "  " + thinkingLines[i] + C.reset);
+          console.log(
+            "  " + C.gray + C.dim + "  " + thinkingLines[i] + C.reset,
+          );
         }
         thinkingBuffer = thinkingLines[thinkingLines.length - 1];
       }
@@ -454,7 +451,9 @@ export async function reactLoop(
     if (!toolCallsBuffer || toolCallsBuffer.length === 0) {
       if (currentTodos.length > 0) {
         currentTodos = currentTodos.map((item) => ({
-          ...item, done: true, active: false,
+          ...item,
+          done: true,
+          active: false,
         }));
         displayTodos(currentTodos);
         currentTodos = [];
@@ -468,7 +467,7 @@ export async function reactLoop(
           C.yellow +
           "⚠" +
           C.reset +
-          " Model menjawab sebelum tool selesai — melanjutkan eksekusi"
+          " Model menjawab sebelum tool selesai — melanjutkan eksekusi",
       );
     }
 
@@ -480,14 +479,12 @@ export async function reactLoop(
         " iterasi " +
         iteration +
         "/" +
-        MAX_ITERATIONS
+        MAX_ITERATIONS,
     );
 
     history.push({
       role: "assistant",
-      content: contentBuffer
-        .replace(/<todo>[\s\S]*?<\/todo>/gi, "")
-        .trim(),
+      content: contentBuffer.replace(/<todo>[\s\S]*?<\/todo>/gi, "").trim(),
       tool_calls: toolCallsBuffer,
     });
 
@@ -495,7 +492,10 @@ export async function reactLoop(
       const toolName = tc.function.name;
       const toolArgs = tc.function.arguments as Record<string, unknown>;
 
-      if (toolName === "searchWeb" && searchWebCallCount >= MAX_SEARCH_WEB_CALLS) {
+      if (
+        toolName === "searchWeb" &&
+        searchWebCallCount >= MAX_SEARCH_WEB_CALLS
+      ) {
         history.push({
           role: "tool",
           content: `You already called searchWeb ${MAX_SEARCH_WEB_CALLS} times in this task. Stop searching and try to fix the issue based on what you have learned.`,
@@ -507,7 +507,11 @@ export async function reactLoop(
         searchWebCallCount++;
       }
 
-      if (REQUIRES_CONFIRMATION.includes(toolName) && onConfirm && !sessionAutoConfirm) {
+      if (
+        REQUIRES_CONFIRMATION.includes(toolName) &&
+        onConfirm &&
+        !sessionAutoConfirm
+      ) {
         const preview = buildPreview(toolName, toolArgs);
         const result = await onConfirm(preview);
 
@@ -544,21 +548,27 @@ export async function reactLoop(
       if (toolName === "readFile" && result.success) {
         history.push({
           role: "tool",
-          content: "[File content for editing reference]\n" + result.output +
+          content:
+            "[File content for editing reference]\n" +
+            result.output +
             "\nIMPORTANT: When calling editFile, use EXACT strings from above.",
         });
       }
 
-      if (toolName === "runCommand" && searchWebCallCount < MAX_SEARCH_WEB_CALLS) {
-        const outputHasError = result.output.toLowerCase().includes("error") ||
+      if (
+        toolName === "runCommand" &&
+        searchWebCallCount < MAX_SEARCH_WEB_CALLS
+      ) {
+        const outputHasError =
+          result.output.toLowerCase().includes("error") ||
           result.output.toLowerCase().includes("syntaxerror") ||
           result.output.toLowerCase().includes("typeerror") ||
           result.output.toLowerCase().includes("referenceerror") ||
           !result.success;
 
         if (outputHasError) {
-          const errorFirstLine = result.output.split("\n")
-            .find((l) => l.trim().length > 0) ?? "";
+          const errorFirstLine =
+            result.output.split("\n").find((l) => l.trim().length > 0) ?? "";
 
           if (errorFirstLine === lastErrorMessage) {
             consecutiveErrorCount++;
@@ -571,7 +581,7 @@ export async function reactLoop(
             consecutiveErrorCount = 0;
             lastErrorMessage = "";
 
-            const command = (toolArgs.command as string ?? "");
+            const command = (toolArgs.command as string) ?? "";
             const techWords = command
               .replace(/[^a-zA-Z0-9\s]/g, " ")
               .trim()
@@ -591,11 +601,15 @@ export async function reactLoop(
             const autoQuery = errorWords;
 
             console.log(
-              "\n  " + C.cyan + "⟳ Auto-search triggered after " +
-              ERROR_THRESHOLD + " consecutive errors" + C.reset
+              "\n  " +
+                C.cyan +
+                "⟳ Auto-search triggered after " +
+                ERROR_THRESHOLD +
+                " consecutive errors" +
+                C.reset,
             );
             console.log(
-              "  " + C.gray + "  Query: " + autoQuery + C.reset + "\n"
+              "  " + C.gray + "  Query: " + autoQuery + C.reset + "\n",
             );
 
             history.push({
@@ -637,7 +651,7 @@ export async function reactLoop(
               " (" +
               lines.length +
               " lines)" +
-              C.reset
+              C.reset,
           );
         } catch {
           // auto-refresh gagal, lanjutkan
@@ -645,32 +659,24 @@ export async function reactLoop(
       }
 
       if (currentTodos.length > 0) {
-        const toolLabel =
-          toolName === "readFile" || toolName === "editFile"
-            ? (toolArgs.path as string ?? "")
-            : toolName === "runCommand"
-            ? (toolArgs.command as string ?? "")
-            : toolName;
-
-        let marked = false;
-        for (const item of currentTodos) {
-          if (!item.done && !item.active && !marked) {
-            if (
-              item.text.toLowerCase().includes(toolName.toLowerCase()) ||
-              item.text
-                .toLowerCase()
-                .includes(
-                  toolLabel.toLowerCase().split("/").pop() ?? ""
-                )
-            ) {
-              item.active = true;
-              marked = true;
-            }
-          }
+        const nextItem = currentTodos.find(
+          (item) => !item.done && !item.active,
+        );
+        if (nextItem) {
+          nextItem.active = true;
+          displayTodos(currentTodos);
         }
-
-        if (marked) displayTodos(currentTodos);
       }
+    }
+
+    for (const item of currentTodos) {
+      if (item.active) {
+        item.done = true;
+        item.active = false;
+      }
+    }
+    if (currentTodos.some((item) => item.done)) {
+      displayTodos(currentTodos);
     }
   }
 
