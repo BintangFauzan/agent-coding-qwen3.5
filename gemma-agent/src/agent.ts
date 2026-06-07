@@ -11,7 +11,7 @@ const OLLAMA_CONFIG = {
   model: "qwen_3.5:latest",
   options: {
     temperature: 0.2,
-    num_ctx: 8192,
+    num_ctx: 32768,
   },
 };
 
@@ -300,7 +300,12 @@ function parseTodo(content: string, thinking: string = ""): TodoItem[] | null {
     const trimmed = line.trim();
     const listMatch = trimmed.match(/^(\d+[\.\)])\s+(.+)/);
     if (listMatch) {
-      numberedItems.push({ text: listMatch[2], done: false, active: false, indent: 0 });
+      numberedItems.push({
+        text: listMatch[2],
+        done: false,
+        active: false,
+        indent: 0,
+      });
     }
   }
   if (numberedItems.length >= 2) {
@@ -308,10 +313,20 @@ function parseTodo(content: string, thinking: string = ""): TodoItem[] | null {
   }
 
   const planKeywords = [
-    "i need to:", "plan:", "steps:", "todo:", "task:",
-    "i'll create", "i will create", "let me create",
-    "i need to create", "need to:", "here's what",
-    "following files", "following steps", "create the following",
+    "i need to:",
+    "plan:",
+    "steps:",
+    "todo:",
+    "task:",
+    "i'll create",
+    "i will create",
+    "let me create",
+    "i need to create",
+    "need to:",
+    "here's what",
+    "following files",
+    "following steps",
+    "create the following",
   ];
   const lowerThinking = thinking.toLowerCase();
 
@@ -329,7 +344,12 @@ function parseTodo(content: string, thinking: string = ""): TodoItem[] | null {
       if (capturing) {
         const listMatch = trimmed.match(/^(\d+[\.\)]|[-*•])\s+(.+)/);
         if (listMatch) {
-          items.push({ text: listMatch[2], done: false, active: false, indent: 0 });
+          items.push({
+            text: listMatch[2],
+            done: false,
+            active: false,
+            indent: 0,
+          });
         } else if (trimmed === "" && items.length > 0) {
           break;
         }
