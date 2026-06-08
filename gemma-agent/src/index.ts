@@ -5,6 +5,8 @@ import type { ToolResult } from "./types";
 import { reactLoop } from "./agent";
 import { initWorkspace, getWorkspaceRoot } from "./workspace";
 import { OLLAMA_CONFIG } from "./config.js";
+import { readdirSync, statSync } from "fs";
+import { join } from "path";
 
 const C = {
   reset: "\x1b[0m",
@@ -145,6 +147,15 @@ You MAY stop and declare completion only if:
 
 ---
 
+## RULE 6: Split Large Files Into Steps
+
+If a file is expected to be more than 150 lines, split its creation:
+1. Write the first part (structure + header) with writeFile
+2. Add subsequent parts with editFile or another writeFile
+Never attempt to generate a very long file in a single tool call.
+
+---
+
 ## AVAILABLE TOOLS
 - readFile(path) — read file contents
 - writeFile(path, content) — write new file or overwrite
@@ -231,6 +242,26 @@ async function readMultilineInput(): Promise<string> {
   });
 }
 
+function listWorkspaceFiles(dir: string = getWorkspaceRoot(), base: string = ""): string[] {
+  const results: string[] = [];
+  try {
+    const entries = readdirSync(dir);
+    for (const entry of entries) {
+      if (entry.startsWith(".") || entry === "node_modules") continue;
+      const fullPath = join(dir, entry);
+      const rel = base ? `${base}/${entry}` : entry;
+      if (statSync(fullPath).isDirectory()) {
+        results.push(...listWorkspaceFiles(fullPath, rel));
+      } else {
+        results.push(rel);
+      }
+    }
+  } catch {
+    // workspace tidak bisa dibaca, abaikan
+  }
+  return results;
+}
+
 async function main(): Promise<void> {
   initWorkspace(process.argv.slice(2));
 
@@ -259,6 +290,20 @@ async function main(): Promise<void> {
     }
 
     history.push({ role: "user", content: userInput });
+
+    const workspaceFiles = listWorkspaceFiles();
+    if (workspaceFiles.length > 0) {
+      history.push({
+        role: "user",
+        content:
+          `[SYSTEM] Before starting, the workspace already contains these files:\n` +
+          workspaceFiles.map((f) => `  - ${f}`).join("\n") +
+          `\n\nREQUIRED:\n` +
+          `1. Call listFiles to see the full structure\n` +
+          `2. Continue with steps that are NOT yet done; do not overwrite existing files\n` +
+          `3. Create todo only for steps that remain unfinished`,
+      });
+    }
 
     try {
       const response = await reactLoop(history, askConfirmation);
