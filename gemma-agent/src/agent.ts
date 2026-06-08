@@ -4,16 +4,9 @@ import type { ToolResult } from "./types";
 import { dispatchTool } from "./tools";
 import { readFileSync } from "fs";
 import { resolvePath } from "./workspace.js";
+import { OLLAMA_CONFIG } from "./config.js";
 
 const MAX_ITERATIONS = 50;
-
-const OLLAMA_CONFIG = {
-  model: "qwen_3.5:latest",
-  options: {
-    temperature: 0.2,
-    num_ctx: 32768,
-  },
-};
 
 const C = {
   reset: "\x1b[0m",
@@ -387,6 +380,25 @@ function displayTodos(todos: TodoItem[]): void {
 let searchWebCallCount = 0;
 const MAX_SEARCH_WEB_CALLS = 3;
 
+function trimHistory(history: Message[], keepLast: number = 12): Message[] {
+  if (history.length <= keepLast + 2) {
+    return history;
+  }
+
+  const systemMessage = history[0];
+  const firstUserMessage = history[1];
+  const recentMessages = history.slice(-keepLast);
+
+  const merged = [systemMessage, firstUserMessage];
+  for (const msg of recentMessages) {
+    if (msg !== firstUserMessage && msg !== systemMessage) {
+      merged.push(msg);
+    }
+  }
+
+  return merged;
+}
+
 export async function reactLoop(
   history: Message[],
   onConfirm?: (preview: string) => Promise<boolean | "all">,
@@ -415,9 +427,11 @@ export async function reactLoop(
     let thinkingStarted = false;
     let thinkingClosed = false;
 
+    const trimmedHistory = trimHistory(history, 12);
+
     const stream = await ollama.chat({
       model: OLLAMA_CONFIG.model,
-      messages: history,
+      messages: trimmedHistory,
       tools: TOOL_DEFINITIONS,
       options: OLLAMA_CONFIG.options,
       stream: true,
@@ -571,6 +585,28 @@ export async function reactLoop(
         content: result.output,
       });
 
+      if (toolName === "runCommand" && !result.success) {
+        const errorLines = result.output
+          .split("\n")
+          .filter((l) => l.trim().length > 0)
+          .slice(0, 10)
+          .join("\n");
+
+        history.push({
+          role: "user",
+          content:
+            `[SYSTEM] Command gagal dengan exit code non-zero. Output error:\n` +
+            `\`\`\`\n${errorLines}\n\`\`\`\n\n` +
+            `WAJIB:\n` +
+            `1. Baca error di atas dengan seksama\n` +
+            `2. Identifikasi file dan baris yang bermasalah\n` +
+            `3. Gunakan readFile untuk melihat isi file tersebut\n` +
+            `4. Perbaiki dengan editFile\n` +
+            `5. Jalankan command yang sama lagi untuk verifikasi\n` +
+            `JANGAN declare selesai sampai command berhasil tanpa error.`,
+        });
+      }
+
       if (toolName === "readFile" && result.success) {
         history.push({
           role: "tool",
@@ -583,14 +619,14 @@ export async function reactLoop(
 
       if (
         toolName === "runCommand" &&
+        result.success &&
         searchWebCallCount < MAX_SEARCH_WEB_CALLS
       ) {
         const outputHasError =
           result.output.toLowerCase().includes("error") ||
           result.output.toLowerCase().includes("syntaxerror") ||
           result.output.toLowerCase().includes("typeerror") ||
-          result.output.toLowerCase().includes("referenceerror") ||
-          !result.success;
+          result.output.toLowerCase().includes("referenceerror");
 
         if (outputHasError) {
           const errorFirstLine =
@@ -691,7 +727,9 @@ export async function reactLoop(
             item.active = false;
           }
         }
-        const nextItem = currentTodos.find((item) => !item.done && !item.active);
+        const nextItem = currentTodos.find(
+          (item) => !item.done && !item.active,
+        );
         if (nextItem) {
           nextItem.active = true;
         }
