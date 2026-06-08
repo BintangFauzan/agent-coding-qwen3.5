@@ -491,7 +491,24 @@ export async function reactLoop(
     }
 
     if (!toolCallsBuffer || toolCallsBuffer.length === 0) {
-      if (currentTodos.length > 0 && contentBuffer.trim().length > 0) {
+      const hasUnfinishedTodos = currentTodos.some((item) => !item.done);
+
+      if (hasUnfinishedTodos) {
+        const todoStatus = currentTodos
+          .map((t) => `${t.done ? "[x]" : t.active ? "[•]" : "[ ]"} ${t.text}`)
+          .join("\n");
+
+        history.push({
+          role: "user",
+          content:
+            `[SYSTEM] Kamu belum mengerjakan apapun. Todo berikut masih belum selesai:\n` +
+            `<todo>\n${todoStatus}\n</todo>\n\n` +
+            `WAJIB: Mulai dengan memanggil listFiles, lalu kerjakan langkah pertama sekarang.`,
+        });
+        continue;
+      }
+
+      if (currentTodos.length > 0) {
         const allDone = currentTodos.every((item) => item.done);
         if (allDone) {
           displayTodos(currentTodos);
