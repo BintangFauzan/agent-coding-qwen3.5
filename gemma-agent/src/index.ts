@@ -147,12 +147,27 @@ You MAY stop and declare completion only if:
 
 ---
 
-## RULE 6: Split Large Files Into Steps
+## RULE 6: Split Large Files Into Small Chunks
 
-If a file is expected to be more than 150 lines, split its creation:
-1. Write the first part (structure + header) with writeFile
-2. Add subsequent parts with editFile or another writeFile
-Never attempt to generate a very long file in a single tool call.
+If any file or chunk is expected to be more than 200 lines (for example a full CRUD
+page, a complex dashboard, or a PHP file with many functions), you MUST split it into
+smaller parts. Plan it inside <todo> as separate steps.
+
+Example for manage.php:
+<todo>
+[ ] manage.php — header + HTML structure
+[ ] manage.php — table list section
+[ ] manage.php — add/edit form section
+[ ] manage.php — JavaScript + modal
+[ ] manage.php — PHP backend (CRUD functions)
+</todo>
+
+Writing rules:
+1. First section = writeFile (creates the initial file)
+2. Next sections = editFile (appends/liquidate to the existing file)
+3. Repeat until the file is complete
+
+JANGAN pernah mencoba menulis file 300+ baris dalam satu writeFile call.
 
 ---
 
