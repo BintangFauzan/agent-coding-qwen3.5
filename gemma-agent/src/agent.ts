@@ -501,8 +501,13 @@ export async function reactLoop(
       }
       if (chunk.message.thinking) {
         thinkingBuffer += chunk.message.thinking;
-        fullThinking += chunk.message.thinking;
+        if (fullThinking.length < 500) {
+          fullThinking += chunk.message.thinking;
+        }
         const thinkingLines = thinkingBuffer.split("\n");
+        const MAX_THINKING_LINES = 8;
+        let thinkingLineCount = 0;
+
         for (let i = 0; i < thinkingLines.length - 1; i++) {
           if (!thinkingStarted) {
             process.stdout.write(
@@ -510,9 +515,17 @@ export async function reactLoop(
             );
             thinkingStarted = true;
           }
-          console.log(
-            "  " + C.gray + C.dim + "  " + thinkingLines[i] + C.reset,
-          );
+          if (thinkingLineCount < MAX_THINKING_LINES) {
+            console.log(
+              "  " + C.gray + C.dim + "  " + thinkingLines[i] + C.reset,
+            );
+            thinkingLineCount++;
+          } else if (thinkingLineCount === MAX_THINKING_LINES) {
+            console.log(
+              "  " + C.gray + C.dim + "  " + "... (thinking truncated)" + C.reset,
+            );
+            thinkingLineCount++;
+          }
         }
         thinkingBuffer = thinkingLines[thinkingLines.length - 1];
       }
