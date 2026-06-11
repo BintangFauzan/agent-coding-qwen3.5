@@ -257,9 +257,9 @@ function formatToolError(result) {
  * Do NOT parse from thinking blocks or numbered lists.
  * This prevents snowball effect from iterating on model-generated lists.
  */
-function parseTodo(content) {
-    // Only match explicit <todo> tags
-    const match = content.match(/<todo>([\s\S]*?)<\/todo>/i);
+function parseTodo(content, thinking) {
+    const combined = thinking ? content + "\n" + thinking : content;
+    const match = combined.match(/<todo>([\s\S]*?)<\/todo>/i);
     if (!match) {
         return null;
     }
@@ -369,15 +369,19 @@ export async function reactLoop(history, onConfirm) {
             });
         }
     }
+    let lastInjectedTodoStatus = "";
     for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
         if (iteration > 1 && currentTodos.length > 0) {
             const todoStatus = currentTodos
                 .map((t) => `${t.done ? "[x]" : t.active ? "[•]" : "[ ]"} ${t.text}`)
                 .join("\n");
-            history.push({
-                role: "user",
-                content: `[Progress update]\n<todo>\n${todoStatus}\n</todo>\nLanjutkan ke langkah berikutnya yang belum selesai.`,
-            });
+            if (todoStatus !== lastInjectedTodoStatus) {
+                lastInjectedTodoStatus = todoStatus;
+                history.push({
+                    role: "user",
+                    content: `[Progress update]\n<todo>\n${todoStatus}\n</todo>\nContinue to the next unfinished step.`,
+                });
+            }
         }
         let thinkingBuffer = "";
         let fullThinking = "";
@@ -387,7 +391,7 @@ export async function reactLoop(history, onConfirm) {
         let thinkingClosed = false;
         let promptEvalCount = null;
         let evalCount = null;
-        const trimmedHistory = trimHistory(history, 8);
+        const trimmedHistory = trimHistory(history, 6);
         const requestStart = performance.now();
         const stream = await ollama.chat({
             model: OLLAMA_CONFIG.model,
@@ -443,19 +447,19 @@ export async function reactLoop(history, onConfirm) {
             console.log("  " + C.gray + C.dim + "  " + thinkingBuffer + C.reset);
         }
         const finalThinking = thinkingBuffer;
-        if (contentBuffer.trim().length > 0 || fullThinking.trim().length > 0) {
-            // STRICT: Only parse explicit <todo> tags, NOT from thinking
-            const todos = parseTodo(contentBuffer);
-            if (todos) {
+        if ((contentBuffer.trim().length > 0 || fullThinking.trim().length > 0) &&
+            currentTodos.length === 0) {
+            const todos = parseTodo(contentBuffer, fullThinking);
+            if (todos && todos.length > 0) {
                 currentTodos = todos;
                 displayTodos(currentTodos);
             }
-            // ✅ EARLY EXIT for analyze-only mode
-            if (isAnalyzeOnly && !toolCallsBuffer?.length) {
-                // No more tool calls = analysis complete
-                // Return findings and STOP
-                return contentBuffer.trim();
-            }
+        }
+        // ✅ EARLY EXIT for analyze-only mode
+        if (isAnalyzeOnly && !toolCallsBuffer?.length) {
+            // No more tool calls = analysis complete
+            // Return findings and STOP
+            return contentBuffer.trim();
         }
         if (!toolCallsBuffer || toolCallsBuffer.length === 0) {
             const hasUnfinishedTodos = currentTodos.some((item) => !item.done);
@@ -465,9 +469,22 @@ export async function reactLoop(history, onConfirm) {
                     .join("\n");
                 history.push({
                     role: "user",
-                    content: `[SYSTEM] Kamu belum mengerjakan apapun. Todo berikut masih belum selesai:\n` +
+                    content: `[SYSTEM] You haven't started any work. The following todos are still incomplete:\n` +
                         `<todo>\n${todoStatus}\n</todo>\n\n` +
-                        `WAJIB: Mulai dengan memanggil listFiles, lalu kerjakan langkah pertama sekarang.`,
+                        `REQUIRED: Start by calling listFiles, then work on the first step immediately.`,
+                });
+                continue;
+            }
+            if (!isAnalyzeOnly &&
+                iteration <= 3 &&
+                contentBuffer.trim().length > 100) {
+                history.push({
+                    role: "user",
+                    content: `[SYSTEM] You described a plan but haven't started working. ` +
+                        `REQUIRED now:\n` +
+                        `1. Write a <todo> with concrete steps\n` +
+                        `2. Call listFiles immediately to begin\n` +
+                        `Stop explaining — execute now.`,
                 });
                 continue;
             }
@@ -543,9 +560,15 @@ export async function reactLoop(history, onConfirm) {
                     console.log("\n" + result.output + "\n");
                 }
             }
+            const MAX_TOOL_OUTPUT = 80;
+            const outputLines = result.output.split("\n");
+            const truncatedOutput = outputLines.length > MAX_TOOL_OUTPUT
+                ? outputLines.slice(0, MAX_TOOL_OUTPUT).join("\n") +
+                    `\n... (truncated: ${outputLines.length - MAX_TOOL_OUTPUT} more lines)`
+                : result.output;
             history.push({
                 role: "tool",
-                content: result.output,
+                content: truncatedOutput,
             });
             if (toolName === "runCommand" && !result.success) {
                 const errorLines = result.output
@@ -555,23 +578,15 @@ export async function reactLoop(history, onConfirm) {
                     .join("\n");
                 history.push({
                     role: "user",
-                    content: `[SYSTEM] Command gagal dengan exit code non-zero. Output error:\n` +
+                    content: `[SYSTEM] Command failed with non-zero exit code. Error output:\n` +
                         `\`\`\`\n${errorLines}\n\`\`\`\n\n` +
-                        `WAJIB:\n` +
-                        `1. Baca error di atas dengan seksama\n` +
-                        `2. Identifikasi file dan baris yang bermasalah\n` +
-                        `3. Gunakan readFile untuk melihat isi file tersebut\n` +
-                        `4. Perbaiki dengan editFile\n` +
-                        `5. Jalankan command yang sama lagi untuk verifikasi\n` +
-                        `JANGAN declare selesai sampai command berhasil tanpa error.`,
-                });
-            }
-            if (toolName === "readFile" && result.success) {
-                history.push({
-                    role: "tool",
-                    content: "[File content for editing reference]\n" +
-                        result.output +
-                        "\nIMPORTANT: When calling editFile, use EXACT strings from above.",
+                        `REQUIRED:\n` +
+                        `1. Carefully read the error above\n` +
+                        `2. Identify the problematic file and line\n` +
+                        `3. Use readFile to inspect that file\n` +
+                        `4. Fix it with editFile\n` +
+                        `5. Re-run the same command to verify\n` +
+                        `Do NOT declare completion until the command succeeds.`,
                 });
             }
             if (toolName === "runCommand" &&
