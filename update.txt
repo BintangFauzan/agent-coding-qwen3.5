@@ -1,0 +1,184 @@
+# Feature: Tool `readMultipleFiles` (Dioptimasi untuk RTX 2050 4GB VRAM)
+
+Tambahkan tool baru `readMultipleFiles` yang memungkinkan model membaca beberapa file
+sekaligus dalam satu tool call. Lebih efisien dari `readFile` berulang karena menghemat
+iterasi dan context window.
+
+Nilai dibatasi ketat untuk spek RTX 2050 4GB VRAM:
+- Maksimal **4 file** per call
+- Maksimal **100 baris** per file
+- Total output maksimal ~400 baris per call
+
+---
+
+## File #1 — Buat `gemma-agent/src/tools/readMultipleFiles.ts`
+
+```typescript
+import type { ToolResult } from "../types";
+import { readFileSync, accessSync } from "fs";
+import { resolvePath, validatePath } from "../workspace";
+import { z } from "zod";
+
+const ReadMultipleFilesArgsSchema = z.object({
+  paths: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(4)
+    .describe("Array of file paths to read, maximum 4 files"),
+});
+
+const MAX_LINES_PER_FILE = 100;
+
+export async function readMultipleFilesTool(args: unknown): Promise<ToolResult> {
+  const parsed = ReadMultipleFilesArgsSchema.safeParse(args);
+  if (!parsed.success) {
+    return {
+      toolName: "readMultipleFiles",
+      success: false,
+      output:
+        "Invalid arguments: " +
+        parsed.error.errors.map((e) => e.message).join(", "),
+    };
+  }
+
+  const results: string[] = [];
+  const errors: string[] = [];
+
+  for (const filePath of parsed.data.paths) {
+    const resolved = resolvePath(filePath);
+    try {
+      validatePath(resolved);
+      accessSync(resolved);
+      const allLines = readFileSync(resolved, "utf-8").split("\n");
+      const totalLines = allLines.length;
+      const truncated = totalLines > MAX_LINES_PER_FILE;
+      const lines = truncated
+        ? allLines.slice(0, MAX_LINES_PER_FILE)
+        : allLines;
+
+      const width = String(totalLines).length;
+      const numbered = lines
+        .map((line, i) => `${String(i + 1).padStart(width, " ")} | ${line}`)
+        .join("\n");
+
+      const note = truncated
+        ? `\n... (truncated: showing ${MAX_LINES_PER_FILE}/${totalLines} lines — use readFile with startLine/endLine for more)`
+        : "";
+
+      results.push(`=== ${filePath} (${totalLines} lines) ===\n${numbered}${note}`);
+    } catch {
+      errors.push(`- ${filePath}: file not found or inaccessible`);
+    }
+  }
+
+  const errorBlock =
+    errors.length > 0 ? `\nFailed to read:\n${errors.join("\n")}` : "";
+
+  return {
+    toolName: "readMultipleFiles",
+    success: results.length > 0,
+    output:
+      `Read ${results.length}/${parsed.data.paths.length} files:\n\n` +
+      results.join("\n\n") +
+      errorBlock,
+  };
+}
+```
+
+---
+
+## File #2 — Update `gemma-agent/src/tools/index.ts`
+
+Tambahkan import setelah import yang sudah ada:
+
+```typescript
+import { readMultipleFilesTool } from "./readMultipleFiles";
+```
+
+Tambahkan ke object `TOOLS`:
+
+```typescript
+const TOOLS: Record<string, ToolHandler> = {
+  readFile: readFileTool,
+  readMultipleFiles: readMultipleFilesTool,   // ← tambahkan baris ini
+  writeFile: writeFileTool,
+  editFile: editFileTool,
+  runCommand: runCommandTool,
+  listFiles: listFilesTool,
+  searchWeb: searchWebTool,
+};
+```
+
+---
+
+## File #3 — Update `gemma-agent/src/types.ts`
+
+Tambahkan schema baru di akhir file:
+
+```typescript
+export const ReadMultipleFilesArgsSchema = z.object({
+  paths: z.array(z.string().min(1)).min(1).max(4),
+});
+```
+
+---
+
+## File #4 — Update `gemma-agent/src/agent.ts`
+
+Tambahkan definisi tool ke array `TOOL_DEFINITIONS`, setelah blok `readFile`:
+
+```typescript
+{
+  type: "function",
+  function: {
+    name: "readMultipleFiles",
+    description:
+      "Baca 2–4 file sekaligus dalam satu call. Gunakan saat perlu membaca beberapa " +
+      "file sebelum mengerjakan sesuatu — lebih efisien dari readFile berulang. " +
+      "Maksimal 4 file, 100 baris pertama per file. Untuk file panjang gunakan " +
+      "readFile dengan startLine/endLine.",
+    parameters: {
+      type: "object",
+      properties: {
+        paths: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Array path file yang akan dibaca, maksimal 4. " +
+            "Contoh: [\"src/App.tsx\", \"src/config.ts\"]",
+        },
+      },
+      required: ["paths"],
+    },
+  },
+},
+```
+
+---
+
+## Cara Kerja Setelah Ditambahkan
+
+Sebelum (3 iterasi terbuang):
+```
+iterasi 3: readFile src/App.tsx
+iterasi 4: readFile src/index.ts
+iterasi 5: readFile src/styles.css
+iterasi 6: mulai mengerjakan
+```
+
+Sesudah (hemat 2 iterasi):
+```
+iterasi 3: readMultipleFiles ["src/App.tsx", "src/index.ts", "src/styles.css"]
+iterasi 4: mulai mengerjakan
+```
+
+---
+
+## Ringkasan File yang Diubah
+
+| File | Perubahan |
+|------|-----------|
+| `src/tools/readMultipleFiles.ts` | Buat file baru — max 4 file, 100 baris per file |
+| `src/tools/index.ts` | Tambah import + registrasi ke `TOOLS` |
+| `src/types.ts` | Tambah `ReadMultipleFilesArgsSchema` |
+| `src/agent.ts` | Tambah definisi tool ke `TOOL_DEFINITIONS` |

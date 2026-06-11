@@ -43,6 +43,30 @@ const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "readMultipleFiles",
+      description:
+        "Baca 2–4 file sekaligus dalam satu call. Gunakan saat perlu membaca beberapa " +
+        "file sebelum mengerjakan sesuatu — lebih efisien dari readFile berulang. " +
+        "Maksimal 4 file, 100 baris pertama per file. Untuk file panjang gunakan " +
+        "readFile dengan startLine/endLine.",
+      parameters: {
+        type: "object",
+        properties: {
+          paths: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Array path file yang akan dibaca, maksimal 4. " +
+              'Contoh: ["src/App.tsx", "src/config.ts"]',
+          },
+        },
+        required: ["paths"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "writeFile",
       description: "Tulis atau overwrite isi file di workspace.",
       parameters: {
@@ -113,7 +137,9 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "listFiles",
       description:
-        "Tampilkan struktur folder dalam workspace. Gunakan ini PERTAMA KALI sebelum membaca file jika tidak tahu struktur proyek.",
+        "Tampilkan struktur folder dalam workspace dalam bentuk tree lengkap " +
+        "dengan seluruh subfolder. Gunakan ini PERTAMA KALI sebelum membaca file " +
+        "jika tidak tahu struktur proyek.",
       parameters: {
         type: "object",
         properties: {
@@ -121,6 +147,11 @@ const TOOL_DEFINITIONS = [
             type: "string",
             description:
               "Direktori yang ingin di-list, relatif ke workspace root. Default: root workspace.",
+          },
+          maxDepth: {
+            type: "number",
+            description:
+              "Kedalaman maksimal tree. Default: 4. Naikkan jika perlu melihat folder yang lebih dalam.",
           },
         },
         required: [],
@@ -242,6 +273,14 @@ function formatToolSuccess(result: ToolResult): string {
     const displayQuery = query.length > 50 ? query.slice(0, 47) + "..." : query;
     return "  " + C.green + "✓" + C.reset + " searchWeb — " + displayQuery;
   }
+  if (result.toolName === "listFiles") {
+    return (
+      "\n  " +
+        C.gray +
+        result.output +
+        C.reset
+    );
+  }
   return (
     "  " + C.green + "✓" + C.reset + " " + result.toolName + " — " + firstLine
   );
@@ -260,98 +299,44 @@ function formatToolError(result: ToolResult): string {
   );
 }
 
-function parseTodo(content: string, thinking: string = ""): TodoItem[] | null {
-  const combined = content + "\n" + thinking;
-  const match = combined.match(/<todo>([\s\S]*?)<\/todo>/i);
+/**
+ * STRICT parsing: Only parse explicit <todo>...</todo> blocks.
+ * Do NOT parse from thinking blocks or numbered lists.
+ * This prevents snowball effect from iterating on model-generated lists.
+ */
+function parseTodo(content: string): TodoItem[] | null {
+  // Only match explicit <todo> tags
+  const match = content.match(/<todo>([\s\S]*?)<\/todo>/i);
 
-  if (match) {
-    const lines = match[1].split("\n");
-    const items: TodoItem[] = [];
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const indentMatch = line.match(/^(\s*)/);
-      const spaces = indentMatch ? indentMatch[1].length : 0;
-      const indent = Math.floor(spaces / 4);
-      const todoMatch = line.trim().match(/^\[([x•\s])\]\s+(.+)/i);
-      if (todoMatch) {
-        items.push({
-          text: todoMatch[2],
-          done: todoMatch[1].toLowerCase() === "x",
-          active: todoMatch[1] === "•",
-          indent,
-        });
-      } else {
-        items.push({ text: line.trim(), done: false, active: false, indent });
-      }
-    }
-    return items.length > 0 ? items : null;
+  if (!match) {
+    return null;
   }
 
-  const allLines = thinking.split("\n");
-  const numberedItems: TodoItem[] = [];
-  for (const line of allLines) {
-    const trimmed = line.trim();
-    const listMatch = trimmed.match(/^(\d+[\.\)])\s+(.+)/);
-    if (listMatch) {
-      numberedItems.push({
-        text: listMatch[2],
-        done: false,
-        active: false,
-        indent: 0,
+  const lines = match[1].split("\n");
+  const items: TodoItem[] = [];
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+
+    const indentMatch = line.match(/^(\s*)/);
+    const spaces = indentMatch ? indentMatch[1].length : 0;
+    const indent = Math.floor(spaces / 4);
+
+    // Match [ ], [x], [•], [✓] patterns
+    const todoMatch = line.trim().match(/^\[([ x•✓])\]\s+(.+)/i);
+
+    if (todoMatch) {
+      const marker = todoMatch[1].toLowerCase();
+      items.push({
+        text: todoMatch[2],
+        done: marker === "x" || marker === "✓",
+        active: marker === "•",
+        indent,
       });
     }
   }
-  if (numberedItems.length >= 2) {
-    return numberedItems;
-  }
 
-  const planKeywords = [
-    "i need to:",
-    "plan:",
-    "steps:",
-    "todo:",
-    "task:",
-    "i'll create",
-    "i will create",
-    "let me create",
-    "i need to create",
-    "need to:",
-    "here's what",
-    "following files",
-    "following steps",
-    "create the following",
-  ];
-  const lowerThinking = thinking.toLowerCase();
-
-  if (planKeywords.some((k) => lowerThinking.includes(k))) {
-    const lines = thinking.split("\n");
-    const items: TodoItem[] = [];
-    let capturing = false;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (planKeywords.some((k) => trimmed.toLowerCase().includes(k))) {
-        capturing = true;
-        continue;
-      }
-      if (capturing) {
-        const listMatch = trimmed.match(/^(\d+[\.\)]|[-*•])\s+(.+)/);
-        if (listMatch) {
-          items.push({
-            text: listMatch[2],
-            done: false,
-            active: false,
-            indent: 0,
-          });
-        } else if (trimmed === "" && items.length > 0) {
-          break;
-        }
-      }
-    }
-    return items.length > 0 ? items : null;
-  }
-
-  return null;
+  return items.length > 0 ? items : null;
 }
 
 function displayTodos(todos: TodoItem[]): void {
@@ -379,6 +364,51 @@ function displayTodos(todos: TodoItem[]): void {
 
 let searchWebCallCount = 0;
 const MAX_SEARCH_WEB_CALLS = 3;
+
+// ============ INTENT DETECTION ============
+interface IntentDetection {
+  type: "analyze-only" | "implement" | "unknown";
+  keywords: string[];
+}
+
+function detectIntent(userMessage: string): IntentDetection {
+  const lower = userMessage.toLowerCase();
+
+  // ANALYZE ONLY patterns
+  const analyzeKeywords = [
+    "review", "analisa", "analyze", "how does", "explain", "check",
+    "what's wrong", "gimana cara", "bagaimana", "apakah ada issue",
+    "ada masalah", "issue", "problem", "vulnerability",
+  ];
+
+  // IMPLEMENT patterns
+  const implementKeywords = [
+    "fix", "buat", "create", "implement", "refactor", "debug",
+    "setup", "tulis", "write", "improve", "optimize", "solve",
+    "perbaiki", "buat fitur", "tambah",
+  ];
+
+  // Check for explicit "jangan diedit" override
+  const hasNoEditKeyword =
+    lower.includes("jangan diedit") ||
+    lower.includes("analyze aja") ||
+    lower.includes("analyze only");
+
+  // Check for analyze-only (higher priority)
+  const hasAnalyzeKeyword = analyzeKeywords.some((k) => lower.includes(k));
+
+  if (hasAnalyzeKeyword || hasNoEditKeyword) {
+    return { type: "analyze-only", keywords: analyzeKeywords };
+  }
+
+  // Check for implement
+  const hasImplementKeyword = implementKeywords.some((k) => lower.includes(k));
+  if (hasImplementKeyword) {
+    return { type: "implement", keywords: implementKeywords };
+  }
+
+  return { type: "unknown", keywords: [] };
+}
 
 function trimHistory(history: Message[], keepLast: number = 12): Message[] {
   if (history.length <= keepLast + 2) {
@@ -408,6 +438,23 @@ export async function reactLoop(
   lastErrorMessage = "";
   consecutiveErrorCount = 0;
 
+  // Detect user intent from first user message
+  let isAnalyzeOnly = false;
+  const firstUserMsg = history.find((m) => m.role === "user");
+  if (firstUserMsg && typeof firstUserMsg.content === "string") {
+    const intent = detectIntent(firstUserMsg.content);
+    isAnalyzeOnly = intent.type === "analyze-only";
+
+    if (isAnalyzeOnly) {
+      // Add system reminder for analyze-only mode
+      history.push({
+        role: "system",
+        content:
+          "User requested ANALYZE ONLY. After analyzing and showing findings, STOP — do not edit files or run commands. Wait for user's explicit 'implement', 'fix', or 'execute plan' to proceed.",
+      });
+    }
+  }
+
   for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     if (iteration > 1 && currentTodos.length > 0) {
       const todoStatus = currentTodos
@@ -426,9 +473,12 @@ export async function reactLoop(
     let toolCallsBuffer: any[] = [];
     let thinkingStarted = false;
     let thinkingClosed = false;
+    let promptEvalCount: number | null = null;
+    let evalCount: number | null = null;
 
-    const trimmedHistory = trimHistory(history, 12);
+    const trimmedHistory = trimHistory(history, 8);
 
+    const requestStart = performance.now();
     const stream = await ollama.chat({
       model: OLLAMA_CONFIG.model,
       messages: trimmedHistory,
@@ -438,6 +488,12 @@ export async function reactLoop(
     });
 
     for await (const chunk of stream) {
+      if ("prompt_eval_count" in chunk) {
+        promptEvalCount = (chunk as any).prompt_eval_count as number;
+      }
+      if ("eval_count" in chunk) {
+        evalCount = (chunk as any).eval_count as number;
+      }
       if (chunk.message.thinking) {
         thinkingBuffer += chunk.message.thinking;
         fullThinking += chunk.message.thinking;
@@ -469,6 +525,16 @@ export async function reactLoop(
       }
     }
 
+    const requestEnd = performance.now();
+    const requestMs = Math.round(requestEnd - requestStart);
+
+    console.log(
+      `  ${C.gray}Request: ${requestMs}ms` +
+        (promptEvalCount !== null ? ` | prompt tokens: ${promptEvalCount}` : "") +
+        (evalCount !== null ? ` | completion tokens: ${evalCount}` : "") +
+        C.reset,
+    );
+
     if (thinkingStarted && !thinkingClosed) {
       process.stdout.write("\n");
     }
@@ -483,10 +549,18 @@ export async function reactLoop(
     const finalThinking = thinkingBuffer;
 
     if (contentBuffer.trim().length > 0 || fullThinking.trim().length > 0) {
-      const todos = parseTodo(contentBuffer, fullThinking);
+      // STRICT: Only parse explicit <todo> tags, NOT from thinking
+      const todos = parseTodo(contentBuffer);
       if (todos) {
         currentTodos = todos;
         displayTodos(currentTodos);
+      }
+
+      // ✅ EARLY EXIT for analyze-only mode
+      if (isAnalyzeOnly && !toolCallsBuffer?.length) {
+        // No more tool calls = analysis complete
+        // Return findings and STOP
+        return contentBuffer.trim();
       }
     }
 

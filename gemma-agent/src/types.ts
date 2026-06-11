@@ -3,6 +3,7 @@ import { z } from "zod";
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  tool_calls?: any[];
 }
 
 export interface ToolCall {
@@ -39,4 +40,9 @@ export const RunCommandArgsSchema = z.object({
 
 export const ListFilesArgsSchema = z.object({
   directory: z.string().default("."),
+  maxDepth: z.number().int().min(1).max(10).optional().default(4),
+});
+
+export const ReadMultipleFilesArgsSchema = z.object({
+  paths: z.array(z.string().min(1)).min(1).max(4),
 });

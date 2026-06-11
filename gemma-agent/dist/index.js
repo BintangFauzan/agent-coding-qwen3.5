@@ -1,26 +1,22 @@
 import readline from "readline";
 import { renderResponse } from "./renderer.js";
-import { Message } from "./types";
-import type { ToolResult } from "./types";
 import { reactLoop } from "./agent";
 import { initWorkspace, getWorkspaceRoot } from "./workspace";
 import { OLLAMA_CONFIG } from "./config.js";
 import { readdirSync, statSync } from "fs";
 import { join } from "path";
-
 const C = {
-  reset: "\x1b[0m",
-  dim: "\x1b[2m",
-  bold: "\x1b[1m",
-  green: "\x1b[32m",
-  red: "\x1b[31m",
-  yellow: "\x1b[33m",
-  blue: "\x1b[34m",
-  cyan: "\x1b[36m",
-  magenta: "\x1b[35m",
-  gray: "\x1b[90m",
+    reset: "\x1b[0m",
+    dim: "\x1b[2m",
+    bold: "\x1b[1m",
+    green: "\x1b[32m",
+    red: "\x1b[31m",
+    yellow: "\x1b[33m",
+    blue: "\x1b[34m",
+    cyan: "\x1b[36m",
+    magenta: "\x1b[35m",
+    gray: "\x1b[90m",
 };
-
 const SYSTEM_PROMPT = `You are an expert coding assistant — persistent, thorough, and never satisfied until tasks work correctly.
 Current workspace: ${getWorkspaceRoot()}
 
@@ -250,177 +246,152 @@ Write brief summary:
 - What was analyzed/built
 - Current status (working, needs testing, etc)
 - Next steps (if any)`;
-
 const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  terminal: true,
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true,
 });
-
 rl.on("SIGINT", () => {
-  console.log("\n" + C.gray + "[Agent] Interrupted. Goodbye!" + C.reset);
-  rl.close();
-  process.exit(0);
+    console.log("\n" + C.gray + "[Agent] Interrupted. Goodbye!" + C.reset);
+    rl.close();
+    process.exit(0);
 });
-
-async function askConfirmation(preview: string): Promise<boolean | "all"> {
-  return new Promise((resolve) => {
-    console.log(preview);
-    process.stdout.write("\n  " + C.magenta + "Jalankan? (y/n/a): " + C.reset);
-    const handler = (line: string) => {
-      rl.removeListener("line", handler);
-      const answer = line.trim().toLowerCase();
-      if (answer === "y" || answer === "yes") {
-        resolve(true);
-      } else if (answer === "a" || answer === "all") {
-        console.log(
-          "  " +
-            C.yellow +
-            "⚠ Auto-confirm diaktifkan untuk sesi ini" +
-            C.reset,
-        );
-        resolve("all");
-      } else {
-        console.log("  " + C.red + "✗ Dibatalkan" + C.reset);
-        resolve(false);
-      }
-    };
-    rl.once("line", handler);
-  });
+async function askConfirmation(preview) {
+    return new Promise((resolve) => {
+        console.log(preview);
+        process.stdout.write("\n  " + C.magenta + "Jalankan? (y/n/a): " + C.reset);
+        const handler = (line) => {
+            rl.removeListener("line", handler);
+            const answer = line.trim().toLowerCase();
+            if (answer === "y" || answer === "yes") {
+                resolve(true);
+            }
+            else if (answer === "a" || answer === "all") {
+                console.log("  " +
+                    C.yellow +
+                    "⚠ Auto-confirm diaktifkan untuk sesi ini" +
+                    C.reset);
+                resolve("all");
+            }
+            else {
+                console.log("  " + C.red + "✗ Dibatalkan" + C.reset);
+                resolve(false);
+            }
+        };
+        rl.once("line", handler);
+    });
 }
-
-async function readMultilineInput(): Promise<string> {
-  return new Promise((resolve) => {
-    const lines: string[] = [];
-    let lastLineEmpty = false;
-
-    process.stdout.write(C.cyan + "You\n" + C.reset + C.bold + "❯ " + C.reset);
-
-    const handler = (line: string) => {
-      if (line === "") {
-        if (lastLineEmpty || lines.length === 0) {
-          if (lines[lines.length - 1] === "") {
-            lines.pop();
-          }
-          rl.removeListener("line", handler);
-          resolve(lines.join("\n").trim());
-        } else {
-          lines.push("");
-          lastLineEmpty = true;
-          process.stdout.write("... ");
-        }
-      } else {
-        lastLineEmpty = false;
-        lines.push(line);
-        process.stdout.write("... ");
-      }
-    };
-
-    rl.on("line", handler);
-  });
+async function readMultilineInput() {
+    return new Promise((resolve) => {
+        const lines = [];
+        let lastLineEmpty = false;
+        process.stdout.write(C.cyan + "You\n" + C.reset + C.bold + "❯ " + C.reset);
+        const handler = (line) => {
+            if (line === "") {
+                if (lastLineEmpty || lines.length === 0) {
+                    if (lines[lines.length - 1] === "") {
+                        lines.pop();
+                    }
+                    rl.removeListener("line", handler);
+                    resolve(lines.join("\n").trim());
+                }
+                else {
+                    lines.push("");
+                    lastLineEmpty = true;
+                    process.stdout.write("... ");
+                }
+            }
+            else {
+                lastLineEmpty = false;
+                lines.push(line);
+                process.stdout.write("... ");
+            }
+        };
+        rl.on("line", handler);
+    });
 }
-
-function listWorkspaceFiles(
-  dir: string = getWorkspaceRoot(),
-  base: string = "",
-): string[] {
-  const results: string[] = [];
-  try {
-    const entries = readdirSync(dir);
-    for (const entry of entries) {
-      if (entry.startsWith(".") || entry === "node_modules") continue;
-      const fullPath = join(dir, entry);
-      const rel = base ? `${base}/${entry}` : entry;
-      if (statSync(fullPath).isDirectory()) {
-        results.push(...listWorkspaceFiles(fullPath, rel));
-      } else {
-        results.push(rel);
-      }
-    }
-  } catch {
-    // workspace tidak bisa dibaca, abaikan
-  }
-  return results;
-}
-
-async function main(): Promise<void> {
-  initWorkspace(process.argv.slice(2));
-
-  console.log(C.blue + "◆ Qwen Agent" + C.reset);
-  console.log("  Workspace : " + getWorkspaceRoot());
-  console.log("  Model     : " + OLLAMA_CONFIG.model);
-  console.log(
-    "  Input     : Enter sekali = baris baru, Enter dua kali = kirim",
-  );
-  console.log("  Exit     : type exit\n");
-
-  const history: Message[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-  ];
-
-  while (true) {
-    const userInput = await readMultilineInput();
-
-    if (!userInput) continue;
-
-    if (
-      userInput.toLowerCase() === "exit" ||
-      userInput.toLowerCase() === "quit"
-    ) {
-      console.log("\n" + C.gray + "[Agent] Goodbye!" + C.reset);
-      rl.close();
-      break;
-    }
-
-
-
-    history.push({ role: "user", content: userInput });
-
-    const workspaceFiles = listWorkspaceFiles();
-    if (workspaceFiles.length > 0) {
-      history.push({
-        role: "user",
-        content:
-          "[SYSTEM] Before starting, the workspace already contains these files:\n" +
-          workspaceFiles.map((f) => "  - " + f).join("\n") +
-          "\n\nREQUIRED:\n" +
-          "1. Call listFiles to see the full structure\n" +
-          "2. Continue with steps that are NOT yet done; do not overwrite existing files\n" +
-          "3. Create todo only for steps that remain unfinished",
-      });
-    }
-
+function listWorkspaceFiles(dir = getWorkspaceRoot(), base = "") {
+    const results = [];
     try {
-      const response = await reactLoop(history, askConfirmation);
-      history.push({ role: "assistant", content: response });
-
-      const bar = "─".repeat(60);
-      console.log("\n\x1b[90m  " + bar + "\x1b[0m");
-      console.log("\x1b[36m\x1b[1m  Agent\x1b[0m");
-      console.log("\x1b[90m  " + bar + "\x1b[0m\n");
-      console.log(renderResponse(response));
-      console.log("\n\x1b[90m  " + bar + "\x1b[0m\n");
-    } catch (err) {
-      console.error(
-        C.red +
-          "[Agent] Error: " +
-          (err instanceof Error ? err.message : String(err)) +
-          C.reset,
-      );
-      history.push({ role: "user", content: userInput });
-      history.push({
-        role: "assistant",
-        content:
-          "I encountered an error: " +
-          (err instanceof Error ? err.message : String(err)) +
-          ". Please try again or check your Ollama connection.",
-      });
+        const entries = readdirSync(dir);
+        for (const entry of entries) {
+            if (entry.startsWith(".") || entry === "node_modules")
+                continue;
+            const fullPath = join(dir, entry);
+            const rel = base ? `${base}/${entry}` : entry;
+            if (statSync(fullPath).isDirectory()) {
+                results.push(...listWorkspaceFiles(fullPath, rel));
+            }
+            else {
+                results.push(rel);
+            }
+        }
     }
-  }
+    catch {
+        // workspace tidak bisa dibaca, abaikan
+    }
+    return results;
 }
-
+async function main() {
+    initWorkspace(process.argv.slice(2));
+    console.log(C.blue + "◆ Qwen Agent" + C.reset);
+    console.log("  Workspace : " + getWorkspaceRoot());
+    console.log("  Model     : " + OLLAMA_CONFIG.model);
+    console.log("  Input     : Enter sekali = baris baru, Enter dua kali = kirim");
+    console.log("  Exit     : type exit\n");
+    const history = [
+        { role: "system", content: SYSTEM_PROMPT },
+    ];
+    while (true) {
+        const userInput = await readMultilineInput();
+        if (!userInput)
+            continue;
+        if (userInput.toLowerCase() === "exit" ||
+            userInput.toLowerCase() === "quit") {
+            console.log("\n" + C.gray + "[Agent] Goodbye!" + C.reset);
+            rl.close();
+            break;
+        }
+        history.push({ role: "user", content: userInput });
+        const workspaceFiles = listWorkspaceFiles();
+        if (workspaceFiles.length > 0) {
+            history.push({
+                role: "user",
+                content: "[SYSTEM] Before starting, the workspace already contains these files:\n" +
+                    workspaceFiles.map((f) => "  - " + f).join("\n") +
+                    "\n\nREQUIRED:\n" +
+                    "1. Call listFiles to see the full structure\n" +
+                    "2. Continue with steps that are NOT yet done; do not overwrite existing files\n" +
+                    "3. Create todo only for steps that remain unfinished",
+            });
+        }
+        try {
+            const response = await reactLoop(history, askConfirmation);
+            history.push({ role: "assistant", content: response });
+            const bar = "─".repeat(60);
+            console.log("\n\x1b[90m  " + bar + "\x1b[0m");
+            console.log("\x1b[36m\x1b[1m  Agent\x1b[0m");
+            console.log("\x1b[90m  " + bar + "\x1b[0m\n");
+            console.log(renderResponse(response));
+            console.log("\n\x1b[90m  " + bar + "\x1b[0m\n");
+        }
+        catch (err) {
+            console.error(C.red +
+                "[Agent] Error: " +
+                (err instanceof Error ? err.message : String(err)) +
+                C.reset);
+            history.push({ role: "user", content: userInput });
+            history.push({
+                role: "assistant",
+                content: "I encountered an error: " +
+                    (err instanceof Error ? err.message : String(err)) +
+                    ". Please try again or check your Ollama connection.",
+            });
+        }
+    }
+}
 main().catch((e) => {
-  console.error("Fatal error:", e);
-  rl.close();
-  process.exit(1);
+    console.error("Fatal error:", e);
+    rl.close();
+    process.exit(1);
 });

@@ -27,6 +27,47 @@ function isSymlinkDir(path: string): boolean {
   }
 }
 
+function buildTree(dir: string, baseName: string, depth: number): string[] {
+  if (depth === 0) {
+    return [];
+  }
+
+  const lines: string[] = [];
+  const entries = readdirSync(dir, { withFileTypes: true });
+
+  const dirs: typeof entries = [];
+  const files: typeof entries = [];
+
+  for (const entry of entries) {
+    if (EXCLUDED.has(entry.name)) continue;
+    if (entry.name.startsWith(".") && entry.name !== ".env") continue;
+
+    if (entry.isDirectory()) {
+      dirs.push(entry);
+    } else {
+      files.push(entry);
+    }
+  }
+
+  const sorted = [...dirs, ...files];
+  for (const entry of sorted) {
+    const isDirectory = entry.isDirectory() || isSymlinkDir(join(dir, entry.name));
+    if (isDirectory) {
+      lines.push(`  ├── ${entry.name}/`);
+      const childLines = buildTree(join(dir, entry.name), `${baseName}/${entry.name}`, depth - 1);
+      if (childLines.length > 0) {
+        for (const childLine of childLines) {
+          lines.push("  │   " + childLine);
+        }
+      }
+    } else {
+      lines.push(`  ├── ${entry.name}`);
+    }
+  }
+
+  return lines;
+}
+
 export async function listFilesTool(args: unknown): Promise<ToolResult> {
   const parsed = ListFilesArgsSchema.safeParse(args);
   if (!parsed.success) {
@@ -41,6 +82,17 @@ export async function listFilesTool(args: unknown): Promise<ToolResult> {
 
   const relDir = parsed.data.directory === "." ? "." : parsed.data.directory;
   const dir = resolvePath(relDir);
+
+  try {
+    validatePath(dir);
+  } catch {
+    return {
+      toolName: "listFiles",
+      success: false,
+      output: `Invalid directory: ${relDir}`,
+    };
+  }
+
   if (!isDir(dir) && !isSymlinkDir(dir)) {
     return {
       toolName: "listFiles",
@@ -50,35 +102,11 @@ export async function listFilesTool(args: unknown): Promise<ToolResult> {
   }
 
   try {
-    const entries = readdirSync(dir, { withFileTypes: true });
-    const depth = 2;
-    const lines: string[] = [];
+    const maxDepth = parsed.data.maxDepth ?? 4;
+    const lines: string[] = [relDir ? `${relDir}/` : "."];
 
-    function renderTree(name: string, d: number) {
-      if (d > depth) return;
-      const bracket = d === depth ? "" : d === 0 && !EXCLUDED.has(name) ? "├── " : `├── `;
-      lines.push(`${" ".repeat(d * 4)}${name}${d < depth && isDir(join(dir, name)) ? "/" : ""}`);
-    }
-
-    if (depth >= 1) {
-      lines.push(parsed.data.directory === "." ? "." : parsed.data.directory);
-      for (const entry of entries) {
-        if (EXCLUDED.has(entry.name)) continue;
-        renderTree(entry.name, 1);
-        if (entry.isDirectory() && depth >= 2) {
-          try {
-            for (const sub of readdirSync(join(dir, entry.name), {
-              withFileTypes: true,
-            })) {
-              if (EXCLUDED.has(sub.name)) continue;
-              renderTree(sub.name, 2);
-            }
-          } catch {
-            lines.push(`". ${entry.name}/ (permission denied)`);
-          }
-        }
-      }
-    }
+    const treeLines = buildTree(dir, "", maxDepth);
+    lines.push(...treeLines);
 
     return {
       toolName: "listFiles",

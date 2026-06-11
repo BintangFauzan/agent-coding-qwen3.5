@@ -1,5 +1,6 @@
 import { ToolCall, ToolResult } from "../types";
 import { readFileTool } from "./readFile";
+import { readMultipleFilesTool } from "./readMultipleFiles";
 import { writeFileTool } from "./writeFile";
 import { runCommandTool } from "./runCommand";
 import { listFilesTool } from "./listFiles";
@@ -10,6 +11,7 @@ type ToolHandler = (args: unknown) => Promise<ToolResult>;
 
 const TOOLS: Record<string, ToolHandler> = {
   readFile: readFileTool,
+  readMultipleFiles: readMultipleFilesTool,
   writeFile: writeFileTool,
   editFile: editFileTool,
   runCommand: runCommandTool,
