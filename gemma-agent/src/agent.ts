@@ -516,22 +516,60 @@ export async function reactLoop(
       });
     }
 
+    const accumulatedToolCalls: Array<{
+      id: string;
+      type: string;
+      function: { name: string; arguments: string };
+    }> = [];
+
     const normalizedStream = (async function* () {
       for await (const chunk of stream) {
         if (provider === "openrouter" && openrouter) {
           const delta = chunk.choices?.[0]?.delta ?? {};
+
+          if (delta.tool_calls) {
+            for (const tcDelta of delta.tool_calls) {
+              const idx = tcDelta.index ?? 0;
+              if (!accumulatedToolCalls[idx]) {
+                accumulatedToolCalls[idx] = {
+                  id: tcDelta.id ?? "",
+                  type: tcDelta.type ?? "function",
+                  function: { name: "", arguments: "" },
+                };
+              }
+              if (tcDelta.id) accumulatedToolCalls[idx].id = tcDelta.id;
+              if (tcDelta.function?.name) {
+                accumulatedToolCalls[idx].function.name = tcDelta.function.name;
+              }
+              if (tcDelta.function?.arguments) {
+                accumulatedToolCalls[idx].function.arguments += tcDelta.function.arguments;
+              }
+            }
+          }
+
           const normalized: any = {
             message: {
               content: delta.content ?? "",
-              tool_calls: delta.tool_calls,
+              tool_calls: undefined,
               thinking: delta.reasoning ?? delta.thinking ?? "",
             },
             usage: chunk.usage,
+            finish_reason: chunk.choices?.[0]?.finish_reason,
           };
           yield normalized;
         } else {
           yield chunk;
         }
+      }
+
+      if (provider === "openrouter" && accumulatedToolCalls.length > 0) {
+        yield {
+          message: {
+            content: "",
+            tool_calls: accumulatedToolCalls.filter((tc) => tc && tc.function.name),
+            thinking: "",
+          },
+        };
       }
     })();
 
@@ -709,7 +747,17 @@ export async function reactLoop(
 
     for (const tc of toolCallsBuffer) {
       const toolName = tc.function.name;
-      const toolArgs = tc.function.arguments as Record<string, unknown>;
+
+      let toolArgs: Record<string, unknown>;
+      if (typeof tc.function.arguments === "string") {
+        try {
+          toolArgs = JSON.parse(tc.function.arguments || "{}");
+        } catch {
+          toolArgs = {};
+        }
+      } else {
+        toolArgs = tc.function.arguments as Record<string, unknown>;
+      }
 
       if (
         toolName === "searchWeb" &&
