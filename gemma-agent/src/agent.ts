@@ -1,10 +1,13 @@
 import { Ollama } from "ollama";
+import OpenAI from "openai";
 import { Message } from "./types";
 import type { ToolResult } from "./types";
 import { dispatchTool } from "./tools";
 import { readFileSync } from "fs";
 import { resolvePath } from "./workspace.js";
-import { OLLAMA_CONFIG } from "./config.js";
+import { OLLAMA_CONFIG, OPENROUTER_CONFIG } from "./config.js";
+
+export type Provider = "ollama" | "openrouter";
 
 const MAX_ITERATIONS = 50;
 
@@ -27,7 +30,9 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "readFile",
       description:
-        "Baca isi file dari workspace. Gunakan startLine dan endLine untuk membaca range baris tertentu — ini lebih efisien untuk file besar. Output selalu menyertakan nomor baris.",
+        "Baca 1 file saja. HANYA gunakan jika perlu baca tepat 1 file. " +
+        "Jika perlu baca 2 file atau lebih sekaligus, WAJIB gunakan readMultipleFiles. " +
+        "Gunakan startLine/endLine untuk file besar.",
       parameters: {
         type: "object",
         properties: {
@@ -45,10 +50,10 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "readMultipleFiles",
       description:
-        "Baca 2–4 file sekaligus dalam satu call. Gunakan saat perlu membaca beberapa " +
-        "file sebelum mengerjakan sesuatu — lebih efisien dari readFile berulang. " +
-        "Maksimal 4 file, 100 baris pertama per file. Untuk file panjang gunakan " +
-        "readFile dengan startLine/endLine.",
+        "WAJIB gunakan ini jika perlu baca 2 file atau lebih. " +
+        "Jauh lebih efisien dari readFile berulang — hemat iterasi dan token. " +
+        "Maksimal 4 file per call, 100 baris pertama per file. " +
+        "Contoh: setelah listFiles, langsung readMultipleFiles semua file relevan sekaligus.",
       parameters: {
         type: "object",
         properties: {
@@ -432,11 +437,16 @@ function trimHistory(history: Message[], keepLast: number = 12): Message[] {
 export async function reactLoop(
   history: Message[],
   onConfirm?: (preview: string) => Promise<boolean | "all">,
+  provider: Provider = "ollama",
 ): Promise<string> {
-  const ollama = new Ollama();
   searchWebCallCount = 0;
   lastErrorMessage = "";
   consecutiveErrorCount = 0;
+
+  const openrouter =
+    provider === "openrouter"
+      ? new OpenAI({ apiKey: OPENROUTER_CONFIG.apiKey, baseURL: OPENROUTER_CONFIG.baseURL })
+      : null;
 
   // Detect user intent from first user message
   let isAnalyzeOnly = false;
@@ -484,20 +494,61 @@ export async function reactLoop(
     const trimmedHistory = trimHistory(history, 6);
 
     const requestStart = performance.now();
-    const stream = await ollama.chat({
-      model: OLLAMA_CONFIG.model,
-      messages: trimmedHistory,
-      tools: TOOL_DEFINITIONS,
-      options: OLLAMA_CONFIG.options,
-      stream: true,
-    });
 
-    for await (const chunk of stream) {
-      if ("prompt_eval_count" in chunk) {
-        promptEvalCount = (chunk as any).prompt_eval_count as number;
+    let stream: AsyncIterable<any>;
+    if (provider === "openrouter" && openrouter) {
+      const response = await openrouter.chat.completions.create({
+        model: OPENROUTER_CONFIG.model,
+        messages: trimmedHistory as any,
+        tools: TOOL_DEFINITIONS as any,
+        temperature: OPENROUTER_CONFIG.options?.temperature ?? 0.35,
+        max_tokens: OPENROUTER_CONFIG.options?.max_tokens ?? 4096,
+        stream: true,
+      });
+      stream = response as any;
+    } else {
+      stream = await new Ollama().chat({
+        model: OLLAMA_CONFIG.model,
+        messages: trimmedHistory,
+        tools: TOOL_DEFINITIONS,
+        options: OLLAMA_CONFIG.options,
+        stream: true,
+      });
+    }
+
+    const normalizedStream = (async function* () {
+      for await (const chunk of stream) {
+        if (provider === "openrouter" && openrouter) {
+          const delta = chunk.choices?.[0]?.delta ?? {};
+          const normalized: any = {
+            message: {
+              content: delta.content ?? "",
+              tool_calls: delta.tool_calls,
+              thinking: delta.reasoning ?? delta.thinking ?? "",
+            },
+            usage: chunk.usage,
+          };
+          yield normalized;
+        } else {
+          yield chunk;
+        }
       }
-      if ("eval_count" in chunk) {
-        evalCount = (chunk as any).eval_count as number;
+    })();
+
+    for await (const chunk of normalizedStream) {
+      if (provider !== "openrouter") {
+        if ("prompt_eval_count" in chunk) {
+          promptEvalCount = (chunk as any).prompt_eval_count as number;
+        }
+        if ("eval_count" in chunk) {
+          evalCount = (chunk as any).eval_count as number;
+        }
+      } else {
+        const usage = (chunk as any).usage;
+        if (usage) {
+          if (promptEvalCount === null && usage.prompt_tokens != null) promptEvalCount = usage.prompt_tokens;
+          if (evalCount === null && usage.completion_tokens != null) evalCount = usage.completion_tokens;
+        }
       }
       if (chunk.message.thinking) {
         thinkingBuffer += chunk.message.thinking;
@@ -708,13 +759,14 @@ export async function reactLoop(
         }
       }
 
+      const outputText = result.output ?? "";
       const MAX_TOOL_OUTPUT = 80;
-      const outputLines = result.output.split("\n");
+      const outputLines = outputText.split("\n");
       const truncatedOutput =
         outputLines.length > MAX_TOOL_OUTPUT
           ? outputLines.slice(0, MAX_TOOL_OUTPUT).join("\n") +
             `\n... (truncated: ${outputLines.length - MAX_TOOL_OUTPUT} more lines)`
-          : result.output;
+          : outputText;
 
       history.push({
         role: "tool",
@@ -748,11 +800,12 @@ export async function reactLoop(
       result.success &&
       searchWebCallCount < MAX_SEARCH_WEB_CALLS
     ) {
+      const outputText = result.output ?? "";
       const outputHasError =
-        result.output.toLowerCase().includes("error") ||
-        result.output.toLowerCase().includes("syntaxerror") ||
-        result.output.toLowerCase().includes("typeerror") ||
-        result.output.toLowerCase().includes("referenceerror");
+        outputText.toLowerCase().includes("error") ||
+        outputText.toLowerCase().includes("syntaxerror") ||
+        outputText.toLowerCase().includes("typeerror") ||
+        outputText.toLowerCase().includes("referenceerror");
 
       if (outputHasError) {
         const errorFirstLine =

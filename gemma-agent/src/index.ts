@@ -3,8 +3,9 @@ import { renderResponse } from "./renderer.js";
 import { Message } from "./types";
 import type { ToolResult } from "./types";
 import { reactLoop } from "./agent";
+import type { Provider } from "./agent";
 import { initWorkspace, getWorkspaceRoot } from "./workspace";
-import { OLLAMA_CONFIG } from "./config.js";
+import { OLLAMA_CONFIG, OPENROUTER_CONFIG } from "./config.js";
 import { readdirSync, statSync } from "fs";
 import { join } from "path";
 
@@ -46,7 +47,8 @@ Workspace: ${getWorkspaceRoot()}
 
 ## RULES
 - Never guess file paths — use exact paths from listFiles
-- Always readFile before editFile
+- Need to read 1 file? use readFile. Need 2+ files? ALWAYS use readMultipleFiles — never call readFile multiple times in a row
+- Always read before editing
 - Files >150 lines: split into multiple writeFile/editFile calls
 - runCommand fails: read error, fix file, run again — do not stop
 - Framework setup: use official scaffolds (vite, create-next-app, etc)
@@ -152,9 +154,22 @@ function listWorkspaceFiles(
 async function main(): Promise<void> {
   initWorkspace(process.argv.slice(2));
 
-  console.log(C.blue + "◆ Qwen Agent" + C.reset);
+  const providerArg = process.argv.find((a) => a.startsWith("--provider="));
+  let provider: Provider = "ollama";
+  if (providerArg) {
+    const value = (providerArg.split("=")[1] ?? "").trim().toLowerCase();
+    if (value === "openrouter") {
+      provider = "openrouter";
+    }
+  }
+
+  const activeConfig =
+    provider === "openrouter" ? OPENROUTER_CONFIG : OLLAMA_CONFIG;
+
+  console.log(C.blue + "◆ Agent" + C.reset);
   console.log("  Workspace : " + getWorkspaceRoot());
-  console.log("  Model     : " + OLLAMA_CONFIG.model);
+  console.log("  Provider  : " + provider);
+  console.log("  Model     : " + activeConfig.model);
   console.log(
     "  Input     : Enter sekali = baris baru, Enter dua kali = kirim",
   );
@@ -197,7 +212,7 @@ async function main(): Promise<void> {
     }
 
     try {
-      const response = await reactLoop(history, askConfirmation);
+      const response = await reactLoop(history, askConfirmation, provider);
       history.push({ role: "assistant", content: response });
 
       const bar = "─".repeat(60);
