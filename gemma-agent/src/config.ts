@@ -12,7 +12,7 @@ export const OLLAMA_CONFIG = {
 
 export const OPENROUTER_CONFIG = {
   enabled: true,
-  apiKey: "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",
+  apiKey: "",
   baseURL: "https://openrouter.ai/api/v1",
   model: "poolside/laguna-m.1:free",
   options: {
